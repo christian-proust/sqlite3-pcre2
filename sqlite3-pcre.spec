@@ -37,7 +37,7 @@ make
 
 #check
 sqlite3 >out <<EOF
-.load ./pcre.so
+.load ./pcre2.so
 SELECT "asdf" REGEXP "(?i)^A";
 EOF
 grep 1 out
@@ -47,7 +47,7 @@ make DESTDIR=%buildroot%_libdir install
 
 %files
 %dir %_libdir/sqlite3
-%_libdir/sqlite3/pcre.so
+%_libdir/sqlite3/pcre2.so
 
 %changelog
 * Thu Nov 02 2006 Alexey Tourbin <at@altlinux.ru> 0.1-alt1
