@@ -1,27 +1,27 @@
-Name: sqlite3-pcre
-Version: 0.1.1
+Name: sqlite3-pcre2
+Version: 0.1.2
 Release: 0
 
 Summary: Perl-compatible regular expression support for the SQLite
 License: Public Domain
 Group: Databases
-URL: http://git.altlinux.org/people/at/packages/?p=sqlite3-pcre.git
+URL: https://github.com/christian-proust/sqlite3-pcre2
 
 Source: %name-%version.tar.gz
 
 Requires: libsqlite3 >= 3.3.8-alt2
 
 # Automatically added by buildreq on Thu Nov 02 2006
-BuildRequires: libpcre-devel libsqlite3-devel sqlite3
+BuildRequires: libpcre2-devel libsqlite3-devel sqlite3
 
 #%if %{defined suse_version}
-#Requires: libsqlite3 >= 3.3.8 libpcre0
-#BuildRequires: pcre-devel sqlite3-devel sqlite3
+#Requires: libsqlite3 >= 3.3.8 libpcre2
+#BuildRequires: pcre2-devel sqlite3-devel sqlite3
 #%endif
 
 #%if %{defined fedora} || %{defined mdkversion}
-#Requires: libsqlite >= 3.3.8 libpcre0
-#BuildRequires: pcre-devel sqlite-devel sqlite
+#Requires: libsqlite >= 3.3.8 libpcre2
+#BuildRequires: pcre2-devel sqlite-devel sqlite
 #%endif
 
 %description
