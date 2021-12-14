@@ -49,6 +49,7 @@ The regular expression syntax documentation can be found [https://perldoc.perl.o
 ### 2021 UPDATE
 
 - Use the libpcre2 instead of libpcre.
+- Handle NULL character in string.
 
 
 ### 2020 UPDATE
