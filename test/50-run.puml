@@ -1,4 +1,4 @@
-@startuml test-run
+@startuml
 start
 
 group run.sh
