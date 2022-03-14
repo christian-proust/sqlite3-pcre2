@@ -127,10 +127,12 @@ sql_call_args() {
     fi
     if [ -z "$include" ]
     then
-        $SQLITE "$DB" "$sql" \
+        echo "$sql" \
+            | $SQLITE "$DB" \
             || log "Based on SQL command: $sql"
     else
-        $SQLITE "$DB" -cmd "$include" "$sql" \
+        echo "$sql" \
+            | $SQLITE "$DB" -cmd "$include" \
             || log "Based on SQL command: $sql"
     fi
 }
