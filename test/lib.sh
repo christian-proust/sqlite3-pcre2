@@ -138,7 +138,7 @@ sql_call_args() {
 
 log() {
     local "last_return=$?"
-    if [ "$NOLOG" -ne 1 ]
+    if [ -z "$NOLOG" ] || [ "$NOLOG" -ne 1 ]
     then
         echo "$@" 1>&2
     fi
