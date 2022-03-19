@@ -25,6 +25,87 @@ typedef struct {
 #define CACHE_SIZE 16
 #endif
 
+/**
+ * Get a pcre2_code entry from the cache or create a new one.
+ *
+ * Try to find a cache value corresponding to the pattern_str and pattern_len
+ * in the cache. If no entry is found, a new pcre2_code instance is created
+ * instead and put in the cache.
+ *
+ * If an error has been raised, the function return NULL.
+ *
+ * Raises an error in the following case:
+ * * the pattern is invalid.
+ * * there are no memory available to build the regular expression.
+ */
+pcre2_code* pcre2_compile_from_sqlite_cache(
+        sqlite3_context *ctx,
+        const char *pattern_str,
+        int pattern_len) {
+    /* simple LRU cache */
+    int i;
+    int found = 0;
+    cache_entry *cache = sqlite3_user_data(ctx);
+
+    assert(cache);
+
+    for (i = 0; i < CACHE_SIZE && cache[i].pattern_str; i++)
+        if (
+            pattern_len == cache[i].pattern_len
+            && memcmp(pattern_str, cache[i].pattern_str, pattern_len) == 0
+        ) {
+            found = 1;
+            break;
+        }
+    if (found) {
+        if (i > 0) {
+            cache_entry c = cache[i];
+            memmove(cache + 1, cache, i * sizeof(cache_entry));
+            cache[0] = c;
+        }
+    } else {
+        cache_entry c;
+        const char *err;
+        int error_code;
+        PCRE2_SIZE error_position;
+        c.pattern_code = pcre2_compile(
+            pattern_str,           /* the pattern */
+            pattern_len,           /* the length of the pattern */
+            0,                     /* default options */
+            &error_code,           /* for error number */
+            &error_position,       /* for error offset */
+            NULL);                 /* use default compile context */
+        if (!c.pattern_code) {
+            PCRE2_UCHAR error_buffer[256];
+            pcre2_get_error_message(error_code, error_buffer, sizeof(error_buffer));
+            char *e2 = sqlite3_mprintf(
+                "Cannot compile pattern \"%s\" at offset %d: %s",
+                pattern_str, (int)error_position, error_buffer);
+            sqlite3_result_error(ctx, e2, -1);
+            sqlite3_free(e2);
+            return NULL;
+        }
+        c.pattern_str = malloc(pattern_len);
+        if (!c.pattern_str) {
+            sqlite3_result_error(ctx, "malloc: ENOMEM", -1);
+            pcre2_code_free(c.pattern_code);
+            return NULL;
+        }
+        memcpy(c.pattern_str, pattern_str, pattern_len);
+        c.pattern_len = pattern_len;
+        i = CACHE_SIZE - 1;
+        if (cache[i].pattern_str) {
+            free(cache[i].pattern_str);
+            assert(cache[i].pattern_code);
+            pcre2_code_free(cache[i].pattern_code);
+        }
+        memmove(cache + 1, cache, i * sizeof(cache_entry));
+        cache[0] = c;
+    }
+    return cache[0].pattern_code;
+}
+
+
 static
 void regexp(sqlite3_context *ctx, int argc, sqlite3_value **argv) {
     const char *pattern_str, *subject_str;
@@ -51,68 +132,11 @@ void regexp(sqlite3_context *ctx, int argc, sqlite3_value **argv) {
     }
     subject_len = sqlite3_value_bytes(argv[1]);
 
-    /* simple LRU cache */
-    {
-        int i;
-        int found = 0;
-        cache_entry *cache = sqlite3_user_data(ctx);
-
-        assert(cache);
-
-        for (i = 0; i < CACHE_SIZE && cache[i].pattern_str; i++)
-            if (
-                pattern_len == cache[i].pattern_len
-                && memcmp(pattern_str, cache[i].pattern_str, pattern_len) == 0
-            ) {
-                found = 1;
-                break;
-            }
-        if (found) {
-            if (i > 0) {
-                cache_entry c = cache[i];
-                memmove(cache + 1, cache, i * sizeof(cache_entry));
-                cache[0] = c;
-            }
-        } else {
-            cache_entry c;
-            const char *err;
-            int error_code;
-            PCRE2_SIZE error_position;
-            c.pattern_code = pcre2_compile(
-                pattern_str,           /* the pattern */
-                pattern_len,           /* the length of the pattern */
-                0,                     /* default options */
-                &error_code,           /* for error number */
-                &error_position,       /* for error offset */
-                NULL);                 /* use default compile context */
-            if (!c.pattern_code) {
-                PCRE2_UCHAR error_buffer[256];
-                pcre2_get_error_message(error_code, error_buffer, sizeof(error_buffer));
-                char *e2 = sqlite3_mprintf(
-                    "Cannot compile pattern \"%s\" at offset %d: %s",
-                    pattern_str, (int)error_position, error_buffer);
-                sqlite3_result_error(ctx, e2, -1);
-                sqlite3_free(e2);
-                return;
-            }
-            c.pattern_str = malloc(pattern_len);
-            if (!c.pattern_str) {
-                sqlite3_result_error(ctx, "malloc: ENOMEM", -1);
-                pcre2_code_free(c.pattern_code);
-                return;
-            }
-            memcpy(c.pattern_str, pattern_str, pattern_len);
-            c.pattern_len = pattern_len;
-            i = CACHE_SIZE - 1;
-            if (cache[i].pattern_str) {
-                free(cache[i].pattern_str);
-                assert(cache[i].pattern_code);
-                pcre2_code_free(cache[i].pattern_code);
-            }
-            memmove(cache + 1, cache, i * sizeof(cache_entry));
-            cache[0] = c;
-        }
-        pattern_code = cache[0].pattern_code;
+    pattern_code = pcre2_compile_from_sqlite_cache(
+        ctx, pattern_str, pattern_len
+    );
+    if(pattern_code == NULL) {
+        return;
     }
 
     {
