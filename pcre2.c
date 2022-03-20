@@ -9,6 +9,7 @@
 #define PCRE2_CODE_UNIT_WIDTH 8
 #include <assert.h>
 #include <stdlib.h>
+#include <stdarg.h>
 #include <string.h>
 #include <pcre2.h>
 #include <sqlite3ext.h>
@@ -24,6 +25,85 @@ typedef struct {
 #ifndef CACHE_SIZE
 #define CACHE_SIZE 16
 #endif
+
+
+/**
+ * Forward the error from PCRE to SQLite as is.
+ *
+ * @param ctx: SQLite context.
+ * @param error_code: error code of PCRE.
+ *
+ * Example:
+ *
+ *    error_pcre2sqlite(
+ *      ctx,
+ *      PCRE2_ERROR_MISSING_CLOSING_PARENTHESIS
+ *    );
+ *    // Call sqlite3_result_error with string:
+ *    // "missing closing parenthesis"
+ */
+void error_pcre2sqlite(sqlite3_context *ctx, int error_code) {
+    PCRE2_UCHAR error_buffer[256];
+    pcre2_get_error_message(error_code, error_buffer, sizeof(error_buffer));
+    sqlite3_result_error(ctx, error_buffer, -1);
+}
+
+
+/**
+ * Forward the error from PCRE to SQLite and prefix it by custom message.
+ *
+ * @param ctx: SQLite context.
+ * @param error_code: error code of PCRE.
+ * @param fmt: format of the prefix of the error message.
+ *    The format of fmt and the variadic arguments are the same as
+ *    the ones for `snprintf`.
+ *
+ * Example:
+ *
+ *    error_pcre2sqlite_prefixed(
+ *      ctx,
+ *      PCRE2_ERROR_MISSING_CLOSING_PARENTHESIS,
+ *      "Cannot compile pattern \"%s\" at offset %d"
+ *      "ab(", 3
+ *    );
+ *    // Call sqlite3_result_error with string:
+ *    // "Cannot compile pattern \"ab(\" at offset 3 (missing closing parenthesis)"
+ *
+ */
+void error_pcre2sqlite_prefixed(sqlite3_context *ctx, int error_code, const char* fmt, ...) {
+    // Get the error from PCRE
+    PCRE2_UCHAR error_buffer[256];
+    pcre2_get_error_message(error_code, error_buffer, sizeof(error_buffer));
+    // initialize the sqlite3_str object
+    sqlite3* db = sqlite3_context_db_handle(ctx);
+    sqlite3_str* str = sqlite3_str_new(db);
+    // Add the error message, as formatted with fmt and the variadic args
+    va_list vargs;
+    va_start(vargs, fmt);
+    sqlite3_str_vappendf(str, fmt, vargs);
+    va_end(vargs);
+    // Append the message from PCRE
+    sqlite3_str_append(str, " (", 2);
+    sqlite3_str_appendall(str, error_buffer);
+    sqlite3_str_appendchar(str, 1, ')');
+    // Return the sqlite3_str as error to the user
+    switch(sqlite3_str_errcode(str)) {
+      case SQLITE_OK:
+        sqlite3_result_error(ctx, sqlite3_str_value(str), sqlite3_str_length(str));
+        break;
+      case SQLITE_NOMEM:
+        sqlite3_result_error_nomem(ctx);
+        break;
+      case SQLITE_TOOBIG:
+        sqlite3_result_error_toobig(ctx);
+        break;
+      default:
+        assert(0);
+    }
+    // destroy the sqlite3_str object
+    sqlite3_free(sqlite3_str_finish(str));
+}
+
 
 /**
  * Get a pcre2_code entry from the cache or create a new one.
@@ -76,13 +156,11 @@ pcre2_code* pcre2_compile_from_sqlite_cache(
             &error_position,       /* for error offset */
             NULL);                 /* use default compile context */
         if (!c.pattern_code) {
-            PCRE2_UCHAR error_buffer[256];
-            pcre2_get_error_message(error_code, error_buffer, sizeof(error_buffer));
-            char *e2 = sqlite3_mprintf(
-                "Cannot compile pattern \"%s\" at offset %d: %s",
-                pattern_str, (int)error_position, error_buffer);
-            sqlite3_result_error(ctx, e2, -1);
-            sqlite3_free(e2);
+            error_pcre2sqlite_prefixed(
+                ctx, error_code,
+                "Cannot compile pattern \"%s\" at offset %d",
+                pattern_str, (int)error_position
+            );
             return NULL;
         }
         c.pattern_str = malloc(pattern_len);
@@ -161,9 +239,7 @@ void regexp(sqlite3_context *ctx, int argc, sqlite3_value **argv) {
         } else if(rc == PCRE2_ERROR_NOMATCH) {
           sqlite3_result_int(ctx, 0);
         } else { // (rc < 0 and the code is not one of the above)
-            PCRE2_UCHAR error_buffer[256];
-            pcre2_get_error_message(rc, error_buffer, sizeof(error_buffer));
-            sqlite3_result_error(ctx, error_buffer, -1);
+            error_pcre2sqlite(ctx, rc);
             return;
         }
         pcre2_match_data_free(match_data);
