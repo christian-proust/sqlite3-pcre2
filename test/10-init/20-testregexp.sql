@@ -42,7 +42,7 @@ INSERT INTO testregexp
 )
 VALUES
     ('''^(A''',     '''asdf''',
-        '%Cannot compile pattern % missing closing parenthesis%',
+        '%Cannot compile REGEXP pattern%missing closing parenthesis%',
         'Non-compilable regexp'
     )
 ;

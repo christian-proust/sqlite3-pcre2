@@ -141,13 +141,13 @@ VALUES
         'Non-compilable regexp',
         '''abcde''',
         '''^(b''',     '''x''',
-        '%Cannot compile pattern % missing closing parenthesis%'
+        '%Cannot compile REGEXP pattern%missing closing parenthesis%'
     ),
     (
         'Invalid reference to group \3 for pattern with only 2 group',
         '''abcde''',
-        '''^(\w)(.)''',     '''\3''',
-        'TODO'  -- TODO
+        '''^(\w)(.)''',     '''$3 abcdef''',
+        '%Cannot execute REGEXP_REPLACE%at character 2%unknown substring%'
     )
 ;
 
