@@ -147,7 +147,7 @@ pcre2_code* pcre2_compile_from_sqlite_cache(
         cache_entry c;
         const char *err;
         int error_code;
-        PCRE2_SIZE error_position;
+        unsigned long error_position;
         c.pattern_code = pcre2_compile(
             pattern_str,           /* the pattern */
             pattern_len,           /* the length of the pattern */
@@ -158,14 +158,14 @@ pcre2_code* pcre2_compile_from_sqlite_cache(
         if (!c.pattern_code) {
             error_pcre2sqlite_prefixed(
                 ctx, error_code,
-                "Cannot compile pattern \"%s\" at offset %d",
-                pattern_str, (int)error_position
+                "Cannot compile REGEXP pattern %Q at offset %lu",
+                pattern_str, error_position
             );
             return NULL;
         }
         c.pattern_str = malloc(pattern_len);
         if (!c.pattern_str) {
-            sqlite3_result_error(ctx, "malloc: ENOMEM", -1);
+            sqlite3_result_error_nomem(ctx);
             pcre2_code_free(c.pattern_code);
             return NULL;
         }
