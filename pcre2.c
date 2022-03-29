@@ -190,12 +190,13 @@ void regexp(sqlite3_context *ctx, int argc, sqlite3_value **argv) {
     int pattern_len, subject_len;
     pcre2_code *pattern_code;
 
-    assert(argc == 2);
+    assert(argc == 2);    // TODO check argc = 1 and argc = 3
     /* check null */
     if (sqlite3_value_type(argv[0]) == SQLITE_NULL || sqlite3_value_type(argv[1]) == SQLITE_NULL) {
         return;
     }
 
+    /* extract parameters values */
     pattern_str = (const char *) sqlite3_value_text(argv[0]);
     if (!pattern_str) {
         sqlite3_result_error(ctx, "no pattern", -1);
@@ -247,6 +248,115 @@ void regexp(sqlite3_context *ctx, int argc, sqlite3_value **argv) {
     }
 }
 
+
+static void regexp_replace(
+        sqlite3_context *ctx,
+        int argc,
+        sqlite3_value **argv) {
+    const char *pattern_str, *subject_str, *replacement_str;
+    int pattern_len, subject_len, replacement_len;
+    pcre2_code *pattern_code;
+
+    assert(argc == 3);      // TODO check argc == 2 and argc = 4
+    /* check NULL parameter */
+    for(int idx = 0; idx < 3; idx++) {
+      if(sqlite3_value_type(argv[idx]) == SQLITE_NULL) {
+        return;
+      }
+    }
+
+    /* extract parameter values */
+    pattern_str = (const char *) sqlite3_value_text(argv[1]);
+    if (!pattern_str) {
+        sqlite3_result_error(ctx, "no pattern", -1);
+        return;
+    }
+    pattern_len = sqlite3_value_bytes(argv[1]);
+
+    subject_str = (const char *) sqlite3_value_text(argv[0]);
+    if (!subject_str) {
+        sqlite3_result_error(ctx, "no subject", -1);
+        return;
+    }
+    subject_len = sqlite3_value_bytes(argv[0]);
+
+    replacement_str = (const char *) sqlite3_value_text(argv[2]);
+    if (!replacement_str) {
+        sqlite3_result_error(ctx, "no replacement", -1);
+        return;
+    }
+    replacement_len = sqlite3_value_bytes(argv[2]);
+
+    pattern_code = pcre2_compile_from_sqlite_cache(
+        ctx, pattern_str, pattern_len
+    );
+    if(pattern_code == NULL) {
+        return;
+    }
+
+    {
+        int substitute_cnt;
+        size_t substitute_len = 0;
+        char *substitute_str = "";
+        substitute_cnt = pcre2_substitute(
+            pattern_code,       // const pcre2_code *code,
+            subject_str,        // PCRE2_SPTR subject,
+            subject_len,        // PCRE2_SIZE length,
+            0,                  // PCRE2_SIZE startoffset,
+            (
+                PCRE2_SUBSTITUTE_GLOBAL
+                | PCRE2_SUBSTITUTE_EXTENDED
+                | PCRE2_SUBSTITUTE_OVERFLOW_LENGTH
+            ),                  // uint32_t options,
+            NULL,               // pcre2_match_data *match_data,
+            NULL,               // pcre2_match_context *mcontext,
+            replacement_str,    // PCRE2_SPTR replacement,
+            replacement_len,    // PCRE2_SIZE rlength,
+            substitute_str,     // PCRE2_UCHAR *outputbuffer,
+            &substitute_len     // PCRE2_SIZE *outlengthptr
+        );
+        if(substitute_cnt == PCRE2_ERROR_NOMEMORY) {
+            assert(substitute_len > 0);
+            substitute_str = sqlite3_malloc(substitute_len);
+            substitute_cnt = pcre2_substitute(
+                pattern_code,       // const pcre2_code *code,
+                subject_str,        // PCRE2_SPTR subject,
+                subject_len,        // PCRE2_SIZE length,
+                0,                  // PCRE2_SIZE startoffset,
+                (
+                   PCRE2_SUBSTITUTE_GLOBAL
+                   | PCRE2_SUBSTITUTE_EXTENDED
+                ),                  // uint32_t options,
+                NULL,               // pcre2_match_data *match_data,
+                NULL,               // pcre2_match_context *mcontext,
+                replacement_str,    // PCRE2_SPTR replacement,
+                replacement_len,    // PCRE2_SIZE rlength,
+                substitute_str,     // PCRE2_UCHAR *outputbuffer,
+                &substitute_len     // PCRE2_SIZE *outlengthptr
+            );
+
+            if(substitute_cnt >= 0) {
+                sqlite3_result_text(ctx, substitute_str, substitute_len, sqlite3_free);
+            } else {
+                error_pcre2sqlite_prefixed(ctx, substitute_cnt,
+                    "Cannot execute REGEXP_REPLACE(%Q, %Q, %Q) at character %d",
+                    subject_str, pattern_str, replacement_str,
+                    substitute_len);
+            }
+        } else if(substitute_cnt >= 0) {
+            assert(substitute_len == 0);
+            sqlite3_result_text(ctx, "", substitute_len, SQLITE_STATIC);
+        } else {
+            assert(substitute_cnt < 0);
+            error_pcre2sqlite_prefixed(
+                ctx, substitute_cnt,
+                "Cannot execute REGEXP_REPLACE(%Q, %Q, %Q) at character %d",
+                subject_str, pattern_str, replacement_str,
+                substitute_len);
+        }
+    }
+}
+
 int sqlite3_extension_init(sqlite3 *db, char **err, const sqlite3_api_routines *api) {
     SQLITE_EXTENSION_INIT2(api)
     cache_entry *cache = calloc(CACHE_SIZE, sizeof(cache_entry));
@@ -255,5 +365,6 @@ int sqlite3_extension_init(sqlite3 *db, char **err, const sqlite3_api_routines *
         return 1;
     }
     sqlite3_create_function(db, "REGEXP", 2, SQLITE_UTF8, cache, regexp, NULL, NULL);
+    sqlite3_create_function(db, "REGEXP_REPLACE", 3, SQLITE_UTF8, cache, regexp_replace, NULL, NULL);
     return 0;
 }
