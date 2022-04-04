@@ -38,4 +38,9 @@ SELECT REGEXP_REPLACE(
 
 ### MariaDB
 
-This function also exists in MariaDB.
+This function also exists in MariaDB, but the `replacement` pattern behave
+differently:
+* In MariaDB, only the reference to group number are recognized with the
+  backslash: `\0` to `\9`. They are written in PCRE2 library with `$0` to `$9`.
+* The PCRE2 library recognize the backslash and the dollar symbol as special
+  character. MariaDB only recognize the pattern above.

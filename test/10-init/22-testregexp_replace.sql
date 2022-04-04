@@ -102,22 +102,22 @@ VALUES
     ( -- description, subject, substitute, pattern, replacement
         'Replacement with \0 reference shall replace with the whole match',
         '''abcde''', '''a"bc"de''',
-        '''b.''', '''"\0"'''
+        '''b.''', '''"$0"'''
     ),
     ( -- description, subject, substitute, pattern, replacement
-        'Replacement with \1 reference shall replace with the first group',
+        'Replacement with ${1} reference shall replace with the first group',
         '''abcde''', '''aBcXde''',
-        '''b(.)''', '''B\1X'''
+        '''b(.)''', '''B${1}X'''
     ),
     ( -- description, subject, substitute, pattern, replacement
-        'Replacement with \3 reference shall replace the third group',
+        'Replacement with $3 reference shall replace the third group',
         '''abcde''', '''c''',
-        '''(a)(b)(.)(d)(e)''', '''\3'''
+        '''(a)(b)(.)(d)(e)''', '''$3'''
     ),
     ( -- description, subject, substitute, pattern, replacement
-        'Replacement with \k<name> shall replace with group (?<name>)',
+        'Replacement with ${name} shall replace with group (?<name>)',
         '''abcde''', '''c''',
-        '''(a)(b)(?<name>.)(d)(e)''', '''\3'''
+        '''(a)(b)(?<name>.)(d)(e)''', '''${name}'''
     )
 ;
 
