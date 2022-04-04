@@ -38,6 +38,9 @@ See [test](test) documentation.
 
 ## Usage
 
+Below is a summary of the available functions. More details can be found
+in the [SQL](doc/sql) documentation page.
+
 ### REGEXP instruction
 ```sql
 -- Test if asdf starts with the letter A with the case insensitive flag
@@ -48,14 +51,12 @@ SELECT 'asdf' REGEXP '(?i)^A'
 ; -- => 0
 ```
 
-### `REGEXP_SUBTRING(subject, pattern)` function
+### `REGEXP_SUBSTR(subject, pattern)` function
 ```sql
 -- Extract the part of a string after '@' and before '.'
-SELECT REGEXP_SUBSTRING('foo@bar.org', '@\K.*?\<=\.', '')
+SELECT REGEXP_SUBSTR('foo@bar.org', '@\K.*?\<=\.', '')
 ; -- => bar
 ```
-
-This function is compatible with MariaDB.
 
 ### `REGEXP_REPLACE(subject, pattern, replacement)` function
 ```sql
@@ -63,14 +64,12 @@ This function is compatible with MariaDB.
 SELECT REGEXP_REPLACE(
     'My name is Bond, James Bond',
     '(\w+), (\w+) \1',
-    '\2, \2 \1'
+    '$2, $2 $1'
 ) AS reorder_name
 ; -- My name is James, James Bond
 ```
 
-This function is compatible with MariaDB.
-
-### `REGEXP_INSTR(subject, pattern, replacement)` function
+### `REGEXP_INSTR(subject, pattern)` function
 ```sql
 -- Find the level of the header
 SELECT REGEXP_INSTR(
@@ -79,8 +78,6 @@ SELECT REGEXP_INSTR(
 ) -1 AS reorder_name
 ; -- 3
 ```
-
-This function is compatible with MariaDB.
 
 
 ## PCRE2 library
