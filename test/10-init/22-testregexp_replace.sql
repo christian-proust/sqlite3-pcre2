@@ -69,12 +69,6 @@ VALUES
         '''''', '''012'''
     ),
     ( -- description, subject, substitute, pattern, replacement
-        'Blank pattern shall match all the full string as in MariaDB',
-        -- MariaDB behaviour is: REGEXP_REPLACE('abc', '', '012') => '012'
-        '''abc''', '''012''',
-        '''''', '''012'''
-    ),
-    ( -- description, subject, substitute, pattern, replacement
         'Blank replacement shall erase matched items',
         '''abcde''', '''ade''',
         '''b.''', ''''''

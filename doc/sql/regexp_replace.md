@@ -44,3 +44,10 @@ differently:
   backslash: `\0` to `\9`. They are written in PCRE2 library with `$0` to `$9`.
 * The PCRE2 library recognize the backslash and the dollar symbol as special
   character. MariaDB only recognize the pattern above.
+
+Besides, the regexp `pattern` has a different behaviour when it is the blank
+string:
+* In MariaDB, the return value will be a blank value.
+* Here, each characters of the `subject` will be preceded and followed by the
+  `replacement`. This behaviour corresponds to the one of Python, amongst
+  other.
