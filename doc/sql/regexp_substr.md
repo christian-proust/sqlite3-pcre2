@@ -21,7 +21,7 @@ Return `NULL` if the subject or the pattern is NULL.
 
 ```sql
 -- Extract the part of a string after '@' and before '.'
-SELECT REGEXP_SUBSTR('foo@bar.org', '@\K.*?\<=\.', '')
+SELECT REGEXP_SUBSTR('foo@bar.org', '@\K.*?(?=\.)')
 ; -- => bar
 ```
 

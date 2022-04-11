@@ -77,9 +77,9 @@ VALUES
         '''ab\K..'''
     ),
     ( -- description, subject, retval, pattern
-        'Usage of \<= for look-after',
+        'Usage of (?=) for look-ahead',
         '''abcdef''', '''cd''',
-        '''..\<=ef'''
+        '''..(?=ef)'''
     )
 ;
 
