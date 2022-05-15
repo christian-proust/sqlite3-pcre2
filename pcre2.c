@@ -10,6 +10,7 @@
 #include <assert.h>
 #include <stdlib.h>
 #include <stdarg.h>
+#include <stdbool.h>
 #include <string.h>
 #include <pcre2.h>
 #include <sqlite3ext.h>
@@ -279,6 +280,85 @@ void regexp(sqlite3_context *ctx, int argc, sqlite3_value **argv) {
 }
 
 
+static void regexp_instr(sqlite3_context *ctx, int argc, sqlite3_value **argv) {
+    const char *pattern_str, *subject_str;
+    int pattern_len, subject_len;
+    bool subject_is_blob;
+    pcre2_code *pattern_code;
+
+    assert(argc == 2);    // TODO check argc = 1 and argc = 3
+    /* check null */
+    if (sqlite3_value_type(argv[0]) == SQLITE_NULL || sqlite3_value_type(argv[1]) == SQLITE_NULL) {
+        return;
+    }
+
+    /* extract parameters values */
+    subject_is_blob = sqlite3_value_type(argv[0]) == SQLITE_BLOB;
+    if (subject_is_blob) {
+        subject_str = (const char *) sqlite3_value_blob(argv[0]);
+    } else {
+        subject_str = (const char *) sqlite3_value_text(argv[0]);
+    }
+    if (!subject_str) {
+        sqlite3_result_error(ctx, "no subject", -1);
+        return;
+    }
+    subject_len = sqlite3_value_bytes(argv[0]);
+
+    pattern_str = (const char *) sqlite3_value_text(argv[1]);
+    if (!pattern_str) {
+        sqlite3_result_error(ctx, "no pattern", -1);
+        return;
+    }
+    pattern_len = sqlite3_value_bytes(argv[1]);
+
+    pattern_code = pcre2_compile_from_sqlite_cache(
+        ctx, pattern_str, pattern_len
+    );
+    if(pattern_code == NULL) {
+        return;
+    }
+
+    {
+        int rc;
+        pcre2_match_data *match_data;
+        assert(pattern_code);
+
+        match_data = pcre2_match_data_create_from_pattern(pattern_code, NULL);
+        rc = pcre2_match(
+          pattern_code,         /* the compiled pattern */
+          subject_str,          /* the subject string */
+          subject_len,          /* the length of the subject */
+          0,                    /* start at offset 0 in the subject */
+          0,                    /* default options */
+          match_data,           /* block for storing the result */
+          NULL);                /* use default match context */
+
+        assert(rc != 0);
+        if(rc >= 0) {
+            PCRE2_SIZE ans;
+            PCRE2_SIZE* ovector = pcre2_get_ovector_pointer(match_data);
+            uint32_t ovector_count = pcre2_get_ovector_count(match_data);
+            assert(ovector_count > 0);
+            ans = ovector[0];
+            assert(ans < ((uint64_t)subject_len));
+            if (!subject_is_blob) {
+                ans = utf8_char_cnt(subject_str, ans);
+            }
+            assert(ans < INT64_MAX - 1);
+            ans++;
+            sqlite3_result_int64(ctx, ans);
+        } else if(rc == PCRE2_ERROR_NOMATCH) {
+            sqlite3_result_int(ctx, 0);
+        } else { // (rc < 0 and the code is not one of the above)
+            error_pcre2sqlite(ctx, rc);
+        }
+        pcre2_match_data_free(match_data);
+        return;
+    }
+}
+
+
 static void regexp_substr(
         sqlite3_context *ctx,
         int argc,
@@ -466,6 +546,7 @@ int sqlite3_extension_init(sqlite3 *db, char **err, const sqlite3_api_routines *
         return 1;
     }
     sqlite3_create_function(db, "REGEXP", 2, SQLITE_UTF8, cache, regexp, NULL, NULL);
+    sqlite3_create_function(db, "REGEXP_INSTR", 2, SQLITE_UTF8, cache, regexp_instr, NULL, NULL);
     sqlite3_create_function(db, "REGEXP_SUBSTR", 2, SQLITE_UTF8, cache, regexp_substr, NULL, NULL);
     sqlite3_create_function(db, "REGEXP_REPLACE", 3, SQLITE_UTF8, cache, regexp_replace, NULL, NULL);
     return 0;
