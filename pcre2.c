@@ -265,15 +265,13 @@ void regexp(sqlite3_context *ctx, int argc, sqlite3_value **argv) {
           match_data,           /* block for storing the result */
           NULL);                /* use default match context */
 
-        assert(rc != 0);  // because we have not set match_data
+        assert(rc != 0);
         if(rc >= 0) {
-          // Normal case because we have not set match_data
-          sqlite3_result_int(ctx, 1);
+            sqlite3_result_int(ctx, 1);
         } else if(rc == PCRE2_ERROR_NOMATCH) {
-          sqlite3_result_int(ctx, 0);
+            sqlite3_result_int(ctx, 0);
         } else { // (rc < 0 and the code is not one of the above)
             error_pcre2sqlite(ctx, rc);
-            return;  // FIXME memory leak
         }
         pcre2_match_data_free(match_data);
         return;
