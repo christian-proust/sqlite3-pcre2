@@ -74,8 +74,8 @@ SELECT REGEXP_REPLACE(
 -- Find the level of the header
 SELECT REGEXP_INSTR(
     '### This is a header of third level',
-    '[^#]'
-) -1 AS reorder_name
+    '#[^#]'
+) AS header_level
 ; -- 3
 ```
 

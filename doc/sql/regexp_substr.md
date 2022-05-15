@@ -8,9 +8,13 @@ REGEXP_SUBSTR(`subject`, `pattern`)
 
 ## Description
 
-Return the portion of the `subject` matching the `pattern`.
+Return the position of the `pattern` into the `subject`.
 
 Return `NULL` if the subject or the pattern is NULL.
+
+In case the subject is a `BLOB`, the position is given in bytes.
+
+In case the subject is a `TEXT`, the position is given in character.
 
 ## Parameters
 
@@ -20,9 +24,12 @@ Return `NULL` if the subject or the pattern is NULL.
 ## Example
 
 ```sql
--- Extract the part of a string after '@' and before '.'
-SELECT REGEXP_SUBSTR('foo@bar.org', '@\K.*?(?=\.)')
-; -- => bar
+-- Find the level of the header
+SELECT REGEXP_INSTR(
+    '### This is a header of third level',
+    '#[^#]'
+) AS header_level
+; -- 3
 ```
 
 ## Compatibility with other DB engines
