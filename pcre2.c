@@ -185,6 +185,37 @@ pcre2_code* pcre2_compile_from_sqlite_cache(
 }
 
 
+/**
+ * Compute the number of character up to position n of byte array.
+ *
+ * @param bytes: bytes from which we are counting character.
+ * @param n: index of byte up to which we want to count characters.
+ *
+ * Example
+ * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+ * // "1é2" in UTF-8 equals
+ * // {
+ * //     0x31,         // 1
+ * //     0xC3, 0xA9,   // é
+ * //     0x32,         // 2
+ * // }
+ * utf8_char_cnt("1é2", 0); // return 0
+ * utf8_char_cnt("1é2", 1); // return 1
+ * utf8_char_cnt("1é2", 2); // return 1, even if invalid
+ * utf8_char_cnt("1é2", 3); // return 2
+ * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+ */
+static size_t utf8_char_cnt(const char * bytes, const size_t n) {
+    size_t continuation_byte_cnt = 0;
+    for(size_t idx = 0; idx < n; idx++) {
+        if ((bytes[idx] &  0xC0) == 0x80) {
+          continuation_byte_cnt++;
+        }
+    }
+    return n - continuation_byte_cnt;
+}
+
+
 static
 void regexp(sqlite3_context *ctx, int argc, sqlite3_value **argv) {
     const char *pattern_str, *subject_str;
