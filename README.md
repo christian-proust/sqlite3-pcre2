@@ -89,6 +89,11 @@ The regular expression syntax documentation can be found [https://perldoc.perl.o
 
 ## Changelog
 
+### 2022 Update
+
+- Add functions `REGEXP_SUBSTR`, `REGEXP_REPLACE`, `REGEXP_INSTR`.
+
+
 ### 2021 UPDATE
 
 - Rename the lib from pcre.so to pcre2.so.
