@@ -29,6 +29,8 @@ if [ "$error_count" -ne 0 ]
 then
     sql_call_args "
 .header on
+.mode line
+.nullvalue NULL
             SELECT *
             FROM testreport
             JOIN testcase ON testcase.id = testreport.testcase
