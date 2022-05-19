@@ -38,6 +38,9 @@ See [test](test) documentation.
 
 ## Usage
 
+Below is a summary of the available functions. More details can be found
+in the [SQL](doc/sql) documentation page.
+
 ### REGEXP instruction
 ```sql
 -- Test if asdf starts with the letter A with the case insensitive flag
@@ -46,6 +49,34 @@ SELECT 'asdf' REGEXP '(?i)^A'
 -- Test if asdf starts with the letter A
 SELECT 'asdf' REGEXP '(?i)^A'
 ; -- => 0
+```
+
+### `REGEXP_SUBSTR(subject, pattern)` function
+```sql
+-- Extract the part of a string after '@' and before '.'
+SELECT REGEXP_SUBSTR('foo@bar.org', '@\K.*?\<=\.', '')
+; -- => bar
+```
+
+### `REGEXP_REPLACE(subject, pattern, replacement)` function
+```sql
+-- Reorder first name and surname.
+SELECT REGEXP_REPLACE(
+    'My name is Bond, James Bond',
+    '(\w+), (\w+) \1',
+    '$2, $2 $1'
+) AS reorder_name
+; -- My name is James, James Bond
+```
+
+### `REGEXP_INSTR(subject, pattern)` function
+```sql
+-- Find the level of the header
+SELECT REGEXP_INSTR(
+    '### This is a header of third level',
+    '#[^#]'
+) AS header_level
+; -- 3
 ```
 
 
