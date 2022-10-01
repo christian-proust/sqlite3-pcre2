@@ -303,28 +303,34 @@ static void error_pcre2sqlite_ctx_prefixed(sqlite3_context *ctx, int error_code,
 
 
 /**
- * Get a pcre2_code entry from the cache or create a new one.
+ * Get a `pcre2_code*` entry from the cache or create a new one.
  *
- * Try to find a cache value corresponding to the pattern_str and pattern_len
- * in the cache. If no entry is found, a new pcre2_code instance is created
- * instead and put in the cache.
+ * Try to find a cache value corresponding to the `pattern_str` and
+ * `pattern_len` in the cache. If no entry is found, a new `pcre2_code*`
+ * instance is created instead and put in the cache.
  *
- * If an error has been raised, the function return NULL.
+ * If no error have been raised, the function return `SQLITE_OK` and the
+ * function will set `*pattern_code`.
  *
- * Raises an error in the following case:
- * * the pattern is invalid.
- * * there are no memory available to build the regular expression.
+ * If an error has been raised, the function returns an error code and
+ * `*pattern_code` will be set to NULL.
+ * - SQLITE_ERROR is returned if the pattern is invalid and `*error_str` is
+ * set with a string that needs to be freed with sqlite3_free.
+ * - SQLITE_NOMEM is returned in case of memory allocation error and `*error_str`
+ * is set to NULL.
  */
-pcre2_code* pcre2_compile_from_sqlite_cache(
-        sqlite3_context *ctx,
+static int pcre2_compile_from_sqlite_cache(
+        cache_entry *cache,
         const char *pattern_str,
-        int pattern_len) {
+        int pattern_len,
+        pcre2_code** pattern_code,
+        char **error_str) {
     /* simple LRU cache */
     int i;
     int found = 0;
-    cache_entry *cache = sqlite3_user_data(ctx);
 
     assert(cache);
+    *pattern_code = NULL;
 
     for (i = 0; i < CACHE_SIZE && cache[i].pattern_str; i++)
         if (
@@ -354,8 +360,8 @@ pcre2_code* pcre2_compile_from_sqlite_cache(
             NULL);                 /* use default compile context */
         if (!c.pattern_code) {
             char literal_regex[256];
-            error_pcre2sqlite_ctx_prefixed(
-                ctx, error_code,
+            return error_pcre2sqlite_prefixed(
+                error_code, error_str,
                 "Cannot compile REGEXP pattern %s at offset %lu",
                 escape_str_to_sql_literal(
                     literal_regex, sizeof(literal_regex),
@@ -363,13 +369,10 @@ pcre2_code* pcre2_compile_from_sqlite_cache(
                 ),
                 error_position
             );
-            return NULL;
         }
         c.pattern_str = malloc(pattern_len);
         if (!c.pattern_str) {
-            sqlite3_result_error_nomem(ctx);
-            pcre2_code_free(c.pattern_code);
-            return NULL;
+            SQLITE_NOMEM;
         }
         memcpy(c.pattern_str, pattern_str, pattern_len);
         c.pattern_len = pattern_len;
@@ -382,7 +385,46 @@ pcre2_code* pcre2_compile_from_sqlite_cache(
         memmove(cache + 1, cache, i * sizeof(cache_entry));
         cache[0] = c;
     }
-    return cache[0].pattern_code;
+    *pattern_code = cache[0].pattern_code;
+    *error_str = NULL;
+    return SQLITE_OK;
+}
+
+
+/**
+ * Get a pcre2_code entry from the cache or create a new one.
+ *
+ * Try to find a cache value corresponding to the pattern_str and pattern_len
+ * in the cache. If no entry is found, a new pcre2_code instance is created
+ * instead and put in the cache.
+ *
+ * If an error has been raised, the function return NULL.
+ *
+ * Raises an error in the following case:
+ * * the pattern is invalid.
+ * * there are no memory available to build the regular expression.
+ */
+static pcre2_code* pcre2_compile_from_sqlite_ctx_cache(
+        sqlite3_context *ctx,
+        const char *pattern_str,
+        int pattern_len) {
+    cache_entry *cache = sqlite3_user_data(ctx);
+    pcre2_code* pattern_code;
+    char *error_str;
+    int error_code = pcre2_compile_from_sqlite_cache(
+        cache, pattern_str, pattern_len,
+        &pattern_code, &error_str
+    );
+    if(error_code == SQLITE_OK) {
+        return pattern_code;
+    } else {
+        if(error_code == SQLITE_NOMEM) {
+            sqlite3_result_error_nomem(ctx);
+        } else {
+            sqlite3_result_error(ctx, error_str, -1);
+        }
+        return NULL;
+    }
 }
 
 
@@ -417,8 +459,7 @@ static size_t utf8_char_cnt(const char * bytes, const size_t n) {
 }
 
 
-static
-void regexp(sqlite3_context *ctx, int argc, sqlite3_value **argv) {
+static void regexp(sqlite3_context *ctx, int argc, sqlite3_value **argv) {
     const char *pattern_str, *subject_str;
     int pattern_len, subject_len;
     pcre2_code *pattern_code;
@@ -444,7 +485,7 @@ void regexp(sqlite3_context *ctx, int argc, sqlite3_value **argv) {
     }
     subject_len = sqlite3_value_bytes(argv[1]);
 
-    pattern_code = pcre2_compile_from_sqlite_cache(
+    pattern_code = pcre2_compile_from_sqlite_ctx_cache(
         ctx, pattern_str, pattern_len
     );
     if(pattern_code == NULL) {
@@ -512,7 +553,7 @@ static void regexp_instr(sqlite3_context *ctx, int argc, sqlite3_value **argv) {
     }
     pattern_len = sqlite3_value_bytes(argv[1]);
 
-    pattern_code = pcre2_compile_from_sqlite_cache(
+    pattern_code = pcre2_compile_from_sqlite_ctx_cache(
         ctx, pattern_str, pattern_len
     );
     if(pattern_code == NULL) {
@@ -590,7 +631,7 @@ static void regexp_substr(
     }
     pattern_len = sqlite3_value_bytes(argv[1]);
 
-    pattern_code = pcre2_compile_from_sqlite_cache(
+    pattern_code = pcre2_compile_from_sqlite_ctx_cache(
         ctx, pattern_str, pattern_len
     );
     if(pattern_code == NULL) {
@@ -667,7 +708,7 @@ static void regexp_replace(
     }
     replacement_len = sqlite3_value_bytes(argv[2]);
 
-    pattern_code = pcre2_compile_from_sqlite_cache(
+    pattern_code = pcre2_compile_from_sqlite_ctx_cache(
         ctx, pattern_str, pattern_len
     );
     if(pattern_code == NULL) {
