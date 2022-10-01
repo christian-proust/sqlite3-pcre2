@@ -29,6 +29,134 @@ typedef struct {
 
 
 /**
+ * Escape chars to ASCII representation as SQLite literal string.
+ *
+ * @param out_str: pointer to the allocate size of string.
+ * @param out_len: allocate size of `out_str` buffer.
+ * @param in_str: input string to escape.
+ * @param in_len: length of in_string. When `in_len < 0`,
+ *     it will be replaced by `strlen(in_str)`.
+ * @return the literal string to be used. It does not necessary equals to
+ *     `out_str` in some corner cases.
+ *
+ * In case `out_len` is not high enough for the whole string to be
+ * escaped, the string is followed by "..." to emphase the missing
+ * characters.
+ *
+ * `in_str` may contains binary character, ASCII characters, or a
+ * combinaison of both. ASCII caracters are the ones between 0x20 and 0x7E.
+ *
+ * In case `in_str` is the null pointer, the functions returns `"NULL"`.
+ *
+ * Example
+ * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+ * out_str = char[22];
+ * escape_str_to_sql_literal(out_str, sizeof(out_str), "1é2", 4); // returns "'1234'..."
+ * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+ *
+ * Truth table with `out_len` equals to 22
+ * ========================================
+ *
+ * || `in_str`               || in_len || Return                    ||
+ * | `"123"`                 |       0 | `"''"`                      |
+ * | `"123"`                 |       2 | `"'12'"`                    |
+ * | `"123"`                 |       3 | `"'123'"`                   |
+ * | `"123"`                 |      -1 | `"'123'"`                   |
+ * | `"1é2"`                 |       4 | `"'1'||x'c3a9'||'2'"`       |
+ * | `"1234567890abcdefghi"` |      20 | `"'1234567890abcdef'..."`   |
+ * | `"1é2é3é"`              |       9 | `"'1'||x'c3a9'||'2'..."`    |
+ * | `"1\0""2"`              |       3 | `"'1'||x'00'||'2'"`         |
+ * | `NULL`                  |       0 | `"NULL"`                    |
+ * | `"1'2"`                 |      -1 | `"'1''2"`                   |
+ */
+static char* escape_str_to_sql_literal(
+        char* out_str, size_t out_len,
+        const char* in_str,  ssize_t in_len
+) {
+    if(in_str == NULL) {
+        return "NULL";
+    }
+    if(in_len < 0) {
+        in_len = strlen(in_str);
+    }
+    if(in_len == 0) {
+        return "''";
+    }
+    if(out_len < 6) {
+        return "''...";
+    }
+    size_t cursor = 0;
+    // mode = 'x' for binary string and 'a' for ascii string and '\0' at the initialization
+    char oldmode = '\0';
+    bool has_broken = false;
+    assert(in_len > 0);
+    for(size_t idx = 0; idx < ((size_t)in_len); idx++) {
+        char c = in_str[idx];
+        char mode;
+        if(c >= 0x20 && c <= 0x7E) {
+            mode = 'a';
+        } else {
+            mode = 'x';
+        }
+        char buffer_str[20];
+        size_t buffer_len;
+        char* fmt;
+        char* join_prefix;
+        char* quote_prefix;
+        char* escape_prefix;
+        if(oldmode != mode) {
+            if(oldmode == '\0') {
+                join_prefix = "";
+            } else {
+                join_prefix = "'||";
+            }
+            if(mode == 'a') {
+                quote_prefix = "'";
+            } else {
+                quote_prefix = "x'";
+            }
+        } else {
+            join_prefix = "";
+            quote_prefix = "";
+        }
+        oldmode = mode;
+        if(c == '\'') {
+            escape_prefix = "'";
+        } else {
+            escape_prefix = "";
+        }
+        if(mode == 'x') {
+            fmt = "%s%s%s%02hhx";
+        } else {
+            fmt = "%s%s%s%c";
+        }
+        sqlite3_snprintf(
+                sizeof(buffer_str), buffer_str, fmt,
+                join_prefix, quote_prefix, escape_prefix, c
+        );
+        buffer_len = strlen(buffer_str);
+        assert(buffer_len < sizeof(buffer_str)-2);
+
+        if(cursor + buffer_len + 5 > out_len) {
+            has_broken = true;
+            break;
+        } else {
+            strcpy(out_str + cursor, buffer_str);
+            cursor += buffer_len;
+        }
+    }
+    if(has_broken) {
+        strcpy(out_str + cursor, "'...");
+        cursor += 4;
+    } else {
+        strcpy(out_str + cursor, "'");
+        cursor += 1;
+    }
+    return out_str;
+}
+
+
+/**
  * Forward the error from PCRE to SQLite as is.
  *
  * @param ctx: SQLite context.
