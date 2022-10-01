@@ -285,11 +285,15 @@ pcre2_code* pcre2_compile_from_sqlite_cache(
             &error_position,       /* for error offset */
             NULL);                 /* use default compile context */
         if (!c.pattern_code) {
+            char literal_regex[256];
             error_pcre2sqlite_prefixed(
                 ctx, error_code,
-                "Cannot compile REGEXP pattern %Q at offset %lu",
-                pattern_str, error_position
-                // FIXME Cannot display pattern in case of NUL character
+                "Cannot compile REGEXP pattern %s at offset %lu",
+                escape_str_to_sql_literal(
+                    literal_regex, sizeof(literal_regex),
+                    pattern_str, pattern_len
+                ),
+                error_position
             );
             return NULL;
         }
@@ -646,9 +650,12 @@ static void regexp_replace(
             if(substitute_cnt >= 0) {
                 sqlite3_result_text(ctx, substitute_str, substitute_len, sqlite3_free);
             } else {
+                char subject_literal[256], pattern_literal[256], replacement_literal[256];
                 error_pcre2sqlite_prefixed(ctx, substitute_cnt,
-                    "Cannot execute REGEXP_REPLACE(%Q, %Q, %Q) at character %d",
-                    subject_str, pattern_str, replacement_str,
+                    "Cannot execute REGEXP_REPLACE(%s, %s, %s) at character %d",
+                    escape_str_to_sql_literal(    subject_literal, sizeof(    subject_literal),     subject_str,     subject_len),
+                    escape_str_to_sql_literal(    pattern_literal, sizeof(    pattern_literal),     pattern_str,     pattern_len),
+                    escape_str_to_sql_literal(replacement_literal, sizeof(replacement_literal), replacement_str, replacement_len),
                     substitute_len);
             }
         } else if(substitute_cnt >= 0) {
@@ -656,10 +663,13 @@ static void regexp_replace(
             sqlite3_result_text(ctx, "", substitute_len, SQLITE_STATIC);
         } else {
             assert(substitute_cnt < 0);
+            char subject_literal[256], pattern_literal[256], replacement_literal[256];
             error_pcre2sqlite_prefixed(
                 ctx, substitute_cnt,
-                "Cannot execute REGEXP_REPLACE(%Q, %Q, %Q) at character %d",
-                subject_str, pattern_str, replacement_str,
+                "Cannot execute REGEXP_REPLACE(%s, %s, %s) at character %d",
+                escape_str_to_sql_literal(    subject_literal, sizeof(    subject_literal),     subject_str,     subject_len),
+                escape_str_to_sql_literal(    pattern_literal, sizeof(    pattern_literal),     pattern_str,     pattern_len),
+                escape_str_to_sql_literal(replacement_literal, sizeof(replacement_literal), replacement_str, replacement_len),
                 substitute_len);
         }
     }
