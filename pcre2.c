@@ -172,13 +172,95 @@ static char* escape_str_to_sql_literal(
  *      ctx,
  *      PCRE2_ERROR_MISSING_CLOSING_PARENTHESIS
  *    );
+ *    // Call
  *    // Call sqlite3_result_error with string:
  *    // "missing closing parenthesis"
  */
-void error_pcre2sqlite(sqlite3_context *ctx, int error_code) {
+static void error_pcre2sqlite(sqlite3_context *ctx, int error_code) {
     PCRE2_UCHAR error_buffer[256];
     pcre2_get_error_message(error_code, error_buffer, sizeof(error_buffer));
     sqlite3_result_error(ctx, error_buffer, -1);
+}
+
+
+/**
+ * See error_pcre2sqlite_prefixed variadic function.
+ */
+static int error_pcre2sqlite_prefixedv(int error_code, char **error_str, const char* fmt, va_list vargs) {
+    PCRE2_UCHAR error_buffer[256];
+    int error_len = pcre2_get_error_message(error_code, error_buffer, sizeof(error_buffer));
+    if(error_len == PCRE2_ERROR_NOMEMORY) {
+        // The error buffer is too small: the error message is truncated.
+        // This is not an ideal behaviour, but acceptable in such condition.
+        // It is better to continue than blocking here.
+        error_len = sizeof(error_buffer);
+    }
+    char* substr = sqlite3_vmprintf(fmt, vargs);
+
+    if(substr == NULL) {
+        *error_str = NULL;
+        return SQLITE_NOMEM;
+    }
+    sqlite3_uint64 substr_len = strlen(substr);
+
+    *error_str = sqlite3_mprintf("%s (%s)", substr, error_buffer);
+
+    sqlite3_free(substr);
+    if(error_str == NULL) {
+        return SQLITE_NOMEM;
+    } else {
+        return SQLITE_ERROR;
+    }
+}
+
+
+/**
+ * Create an error message from PCRE to SQLite and prefix it by a custom message.
+ *
+ * @param error_code: error code of PCRE.
+ * @param str: output string from the function will be written here, or NULL if
+ *    there is a dynamic memory allocation error.
+ *    The `str` needs to be freed afterwards with `sqlite3_free()`.
+ * @param fmt: format of the prefix of the error message.
+ *    The format of fmt and the variadic arguments are the same as
+ *    the ones for `snprintf`.
+ * @return: SQLITE_NOMEM if a dymanic memory allocation fails
+ *    or SQLITE_ERROR if the error message has successfully been generated.
+ *
+ * Example:
+ *
+ *    char* error_str;
+ *    int error_code = error_pcre2sqlite_prefixed(
+ *      PCRE2_ERROR_MISSING_CLOSING_PARENTHESIS,
+ *      &error_str,
+ *      "Cannot compile pattern \"%s\" at offset %d"
+ *      "ab(", 3
+ *    );
+ *    switch(error_code) {
+ *    case SQLITE_NOMEM:
+ *        sqlite3_result_error_nomem(ctx);
+ *        break;
+ *    case SQLITE_ERROR:
+ *        //             /-------- pre-formatted error ------------\  /------ PCRE2 error -------\
+ *        // error_str = "Cannot compile pattern \"ab(\" at offset 3 (missing closing parenthesis)"
+ *        sqlite3_result_error(ctx, error_str);
+ *        sqlite3_free(error_str);
+ *        break;
+ *    default: assert(false);
+ *    }
+ *    // In case of memory alloc error:
+ *    // - error_str = NULL
+ *    // - error_code = SQLITE_NOMEM
+ *    // otherwise:
+ *    // - error_code = SQLITE_NOMEM
+ *    // In both case, the following code will produce the expected outputs:
+ *    sqlite3_result_error(ctx, error_str, -1);
+ */
+static int error_pcre2sqlite_prefixed(int error_code, char **error_str, const char* fmt, ...) {
+    va_list vargs;
+    va_start(vargs, fmt);
+    error_pcre2sqlite_prefixedv(error_code, error_str, fmt, vargs);
+    va_end(vargs);
 }
 
 
@@ -193,7 +275,7 @@ void error_pcre2sqlite(sqlite3_context *ctx, int error_code) {
  *
  * Example:
  *
- *    error_pcre2sqlite_prefixed(
+ *    error_pcre2sqlite_ctx_prefixed(
  *      ctx,
  *      PCRE2_ERROR_MISSING_CLOSING_PARENTHESIS,
  *      "Cannot compile pattern \"%s\" at offset %d"
@@ -203,38 +285,20 @@ void error_pcre2sqlite(sqlite3_context *ctx, int error_code) {
  *    // "Cannot compile pattern \"ab(\" at offset 3 (missing closing parenthesis)"
  *
  */
-void error_pcre2sqlite_prefixed(sqlite3_context *ctx, int error_code, const char* fmt, ...) {
-    // Get the error from PCRE
-    PCRE2_UCHAR error_buffer[256];
-    pcre2_get_error_message(error_code, error_buffer, sizeof(error_buffer));
-    // initialize the sqlite3_str object
-    sqlite3* db = sqlite3_context_db_handle(ctx);
-    sqlite3_str* str = sqlite3_str_new(db);
-    // Add the error message, as formatted with fmt and the variadic args
+static void error_pcre2sqlite_ctx_prefixed(sqlite3_context *ctx, int error_code, const char* fmt, ...) {
+    char* error_str;
     va_list vargs;
     va_start(vargs, fmt);
-    sqlite3_str_vappendf(str, fmt, vargs);
+    int ans = error_pcre2sqlite_prefixedv(error_code, &error_str, fmt, vargs);
     va_end(vargs);
-    // Append the message from PCRE
-    sqlite3_str_append(str, " (", 2);
-    sqlite3_str_appendall(str, error_buffer);
-    sqlite3_str_appendchar(str, 1, ')');
-    // Return the sqlite3_str as error to the user
-    switch(sqlite3_str_errcode(str)) {
-      case SQLITE_OK:
-        sqlite3_result_error(ctx, sqlite3_str_value(str), sqlite3_str_length(str));
-        break;
-      case SQLITE_NOMEM:
+
+    if(ans == SQLITE_NOMEM) {
         sqlite3_result_error_nomem(ctx);
-        break;
-      case SQLITE_TOOBIG:
-        sqlite3_result_error_toobig(ctx);
-        break;
-      default:
-        assert(0);
+    } else {
+        assert(ans == SQLITE_ERROR);
+        sqlite3_result_error(ctx, error_str, -1);
+        sqlite3_free(error_str);
     }
-    // destroy the sqlite3_str object
-    sqlite3_free(sqlite3_str_finish(str));
 }
 
 
@@ -290,7 +354,7 @@ pcre2_code* pcre2_compile_from_sqlite_cache(
             NULL);                 /* use default compile context */
         if (!c.pattern_code) {
             char literal_regex[256];
-            error_pcre2sqlite_prefixed(
+            error_pcre2sqlite_ctx_prefixed(
                 ctx, error_code,
                 "Cannot compile REGEXP pattern %s at offset %lu",
                 escape_str_to_sql_literal(
@@ -655,7 +719,7 @@ static void regexp_replace(
                 sqlite3_result_text(ctx, substitute_str, substitute_len, sqlite3_free);
             } else {
                 char subject_literal[256], pattern_literal[256], replacement_literal[256];
-                error_pcre2sqlite_prefixed(ctx, substitute_cnt,
+                error_pcre2sqlite_ctx_prefixed(ctx, substitute_cnt,
                     "Cannot execute REGEXP_REPLACE(%s, %s, %s) at character %d",
                     escape_str_to_sql_literal(    subject_literal, sizeof(    subject_literal),     subject_str,     subject_len),
                     escape_str_to_sql_literal(    pattern_literal, sizeof(    pattern_literal),     pattern_str,     pattern_len),
@@ -668,7 +732,7 @@ static void regexp_replace(
         } else {
             assert(substitute_cnt < 0);
             char subject_literal[256], pattern_literal[256], replacement_literal[256];
-            error_pcre2sqlite_prefixed(
+            error_pcre2sqlite_ctx_prefixed(
                 ctx, substitute_cnt,
                 "Cannot execute REGEXP_REPLACE(%s, %s, %s) at character %d",
                 escape_str_to_sql_literal(    subject_literal, sizeof(    subject_literal),     subject_str,     subject_len),
