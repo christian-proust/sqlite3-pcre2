@@ -940,9 +940,14 @@ static int rtableColumn(
         case RTABLE_GROUP_ID:
         case RTABLE_VALUE:
         case RTABLE_MATCH_ORDER:
-        case RTABLE_SUBJECT:
-        case RTABLE_PATTERN:
+            // TODO to be implemented.
             sqlite3_result_int64(ctx, 1000 + pCur->iRowid + 1000 * i);
+            break;
+        case RTABLE_SUBJECT:
+            sqlite3_result_text(ctx, pCur->subject_str, pCur->subject_len, NULL);
+            break;
+        case RTABLE_PATTERN:
+            sqlite3_result_text(ctx, pCur->pattern_str, pCur->pattern_len, NULL);
             break;
         default:
             assert( false );
@@ -974,6 +979,29 @@ static int rtableEof(sqlite3_vtab_cursor *cur){
  * This method is called to "rewind" the rtable_cursor object back to the first
  * row of output.  This method is always called at least once prior to any call
  * to rtableColumn() or rtableRowid() or rtableEof().
+ *
+ * This method begins a search of a virtual table. The first argument is a
+ * cursor opened by rtableOpen. The next two arguments define a particular
+ * search index previously chosen by rtableBestIndex.
+ *
+ * In this implementation idxNum is used to represent the query plan.  idxStr
+ * is unused.  idxNum equals 1 if the RTABLE_GROUP_ID is part of the index else
+ * 0.
+ *
+ * The rtableBestIndex function have requested the values of RTABLE_SUBJECT and
+ * RTABLE_PATTERN as argv[0] and argv[1].  RTABLE_GROUP_ID may be present as
+ * argv[2] if narg > 2.
+ *
+ * If the virtual table contains one or more rows that match the search
+ * criteria, then the cursor must be left point at the first row. Subsequent
+ * calls to rtableEof must return false (zero). If there are no rows match,
+ * then the cursor must be left in a state that will cause the rtableEof to
+ * return true (non-zero). The SQLite engine will use the rtableColumn and
+ * rtableRowid methods to access that row content. The rtableNext method will
+ * be used to advance to the next row.
+ *
+ * This method must return SQLITE_OK if successful, or an sqlite error code if
+ * an error occurs.
  */
 static int rtableFilter(
         sqlite3_vtab_cursor *pVtabCursor,
@@ -981,7 +1009,63 @@ static int rtableFilter(
         int argc, sqlite3_value **argv
         ){
     rtable_cursor *pCur = (rtable_cursor *)pVtabCursor;
+    rtable_vtab *pTab = (rtable_vtab *)pCur->base.pVtab;
     pCur->iRowid = 1;
+
+    assert(argc >= 2);
+    // TODO handle SQLITE_NULL arguments
+
+    // Subject copy into pCur->subject*
+    int subject_len = sqlite3_value_bytes(argv[0]);
+    const char*  subject_str = sqlite3_value_text(argv[0]);
+    pCur->subject_str = sqlite3_malloc(subject_len);
+    if(pCur->subject_str == NULL) {
+        rtableCursorReset(pCur);
+        return SQLITE_NOMEM;
+    }
+    memcpy(pCur->subject_str, subject_str, subject_len);
+    pCur->subject_len = subject_len;
+
+    // Pattern copy into pCur->pattern*
+    int pattern_len = sqlite3_value_bytes(argv[1]);
+    const char* pattern_str = sqlite3_value_text(argv[1]);
+    pCur->pattern_str = sqlite3_malloc(pattern_len);
+    if(pCur->pattern_str == NULL) {
+        rtableCursorReset(pCur);
+        return SQLITE_NOMEM;
+    }
+    memcpy(pCur->pattern_str, pattern_str, pattern_len);
+    pCur->pattern_len = pattern_len;
+
+    // Code copy
+    char *error;
+    pcre2_code* code;
+    int ans = pcre2_compile_from_sqlite_cache(
+        pTab->cache,
+        pCur->pattern_str,
+        pCur->pattern_len,
+        &code,
+        &error);
+    if(ans != SQLITE_OK) {
+        sqlite3_free(pTab->base.zErrMsg);
+        pTab->base.zErrMsg = error;
+        rtableCursorReset(pCur);
+        return ans;
+    }
+    pCur->code = pcre2_code_copy(code);
+    pCur->groupID = 0;
+    if(argc > 2) {
+        pCur->filterGroup = sqlite3_value_dup(argv[2]);
+        if(pCur->filterGroup == NULL) {
+            rtableCursorReset(pCur);
+            return SQLITE_NOMEM;
+        }
+    } else {
+        pCur->filterGroup = NULL;
+    }
+
+    // TODO ensure that RTABLE_GROUP_ID is contained into the pattern.
+    // TODO apply regexp on pattern
     return SQLITE_OK;
 }
 
