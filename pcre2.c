@@ -794,7 +794,7 @@ static void regexp_replace(
 typedef struct rtable_vtab rtable_vtab;
 struct rtable_vtab {
     sqlite3_vtab base;  /* Base class - must be first */
-    /* Add new fields here, as necessary */
+    cache_entry *cache;
 };
 
 /**
@@ -805,10 +805,30 @@ struct rtable_vtab {
 typedef struct rtable_cursor rtable_cursor;
 struct rtable_cursor {
     sqlite3_vtab_cursor base;  /* Base class - must be first */
-    // Insert new fields here.  For this REGEXP_TABLE we only keep track
-    // of the rowid
     sqlite3_int64 iRowid;      /* The rowid */
+    char* pattern_str;
+    char* subject_str;
+    int pattern_len;
+    int subject_len;
+    pcre2_code* code;
+    int groupID;
+    sqlite3_value* filterGroup;
 };
+
+
+/** Reset the cursor of rtable_cursor, and free all memory held. */
+static int rtableCursorReset(rtable_cursor *pCur) {
+    // Free all pointers
+    sqlite3_free(pCur->pattern_str); pCur->pattern_str = NULL;
+    sqlite3_free(pCur->subject_str); pCur->subject_str = NULL;
+    sqlite3_value_free(pCur->filterGroup); pCur->filterGroup = NULL;
+    pcre2_code_free(pCur->code); pCur->code = NULL;
+    // set integers to -1
+    pCur->groupID = -1;
+    pCur->pattern_len = -1;
+    pCur->subject_len = -1;
+}
+
 
 /**
  * The rtableConnect() method is invoked to create a new
@@ -844,6 +864,7 @@ static int rtableConnect(
         *ppVtab = (sqlite3_vtab*)pNew;
         if( pNew==0 ) return SQLITE_NOMEM;
         memset(pNew, 0, sizeof(*pNew));
+        pNew->cache = pAux;
     }
     return rc;
 }
@@ -869,11 +890,13 @@ static int rtableOpen(sqlite3_vtab *p, sqlite3_vtab_cursor **ppCursor){
     return SQLITE_OK;
 }
 
+
 /**
  * Destructor for a rtable_cursor.
  */
 static int rtableClose(sqlite3_vtab_cursor *cur){
     rtable_cursor *pCur = (rtable_cursor*)cur;
+    rtableCursorReset(pCur);
     sqlite3_free(pCur);
     return SQLITE_OK;
 }
