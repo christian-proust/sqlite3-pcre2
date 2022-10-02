@@ -854,11 +854,26 @@ static int rtableConnect(
     int rc;
 
     rc = sqlite3_declare_vtab(db,
-            "CREATE TABLE x(a,b)"
+            "CREATE TABLE REGEXP_TABLE (\n"
+            "   -- group_id can be either a number, either a string and designates the\n"
+            "   -- corresponding captured group ID\n"
+            "   group_id ANY,\n"
+            "   -- if group_id = 0, value is the match of the whole regexp,\n"
+            "   -- otherwise it's the match of the group\n"
+            "   value STRING,\n"
+            "   -- match_order is a integer that increase for each match of the pattern\n"
+            "   match_order INT,\n"
+            "   -- subject and pattern are required\n"
+            "   subject STRING HIDDEN,\n"
+            "   pattern STRING HIDDEN\n"
+            ")"
             );
     /* For convenience, define symbolic names for the index to each column. */
-#define TEMPLATEVTAB_A  0
-#define TEMPLATEVTAB_B  1
+#define RTABLE_GROUP_ID         0
+#define RTABLE_VALUE            1
+#define RTABLE_MATCH_ORDER      2
+#define RTABLE_SUBJECT          3
+#define RTABLE_PATTERN          4
     if( rc==SQLITE_OK ){
         pNew = sqlite3_malloc( sizeof(*pNew) );
         *ppVtab = (sqlite3_vtab*)pNew;
@@ -922,12 +937,15 @@ static int rtableColumn(
         ){
     rtable_cursor *pCur = (rtable_cursor*)cur;
     switch( i ){
-        case TEMPLATEVTAB_A:
-            sqlite3_result_int(ctx, 1000 + pCur->iRowid);
+        case RTABLE_GROUP_ID:
+        case RTABLE_VALUE:
+        case RTABLE_MATCH_ORDER:
+        case RTABLE_SUBJECT:
+        case RTABLE_PATTERN:
+            sqlite3_result_int64(ctx, 1000 + pCur->iRowid + 1000 * i);
             break;
         default:
-            assert( i==TEMPLATEVTAB_B );
-            sqlite3_result_int(ctx, 2000 + pCur->iRowid);
+            assert( false );
             break;
     }
     return SQLITE_OK;
