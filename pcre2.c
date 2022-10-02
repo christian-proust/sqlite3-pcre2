@@ -990,11 +990,84 @@ static int rtableFilter(
  * that uses the virtual table.  This routine needs to create
  * a query plan for each invocation and compute an estimated cost for that
  * plan.
+ *
+ * The following columns are required as minimum for every index:
+ * - RTABLE_SUBJECT
+ * - RTABLE_PATTERN
+ * In the case the above columns are not provided, rtableBestIndex returns
+ * SQLITE_CONSTRAINT.
+ *
+ * The following column can be used by the index:
+ * - RTABLE_GROUP_ID
+ * In case the above column is provided, idxNum equals 1, otherwise idxNum
+ * equals 0.
+ *
+ * The following columns cannot be used as index:
+ * - RTABLE_VALUE
+ * - RTABLE_MATCH_ORDER
+ *
+ * In this implementation idxNum is used to represent the
+ * query plan.  idxStr is unused.
+ * idxNum equals 1 if the RTABLE_GROUP_ID is part of the index else 0.
  */
 static int rtableBestIndex(
         sqlite3_vtab *tab,
         sqlite3_index_info *pIdxInfo
         ){
+    int i;
+    /**
+     * ID of argv.
+     * 0: RTABLE_SUBJECT.
+     * 1: RTABLE_PATTERN.
+     * 2: RTABLE_GROUP_ID.
+     */
+    int argID;
+    int constraintIDs[3] = {-1, -1, -1};
+    const struct sqlite3_index_constraint *pConstraint;
+    for(i=0, pConstraint = pIdxInfo->aConstraint; i<pIdxInfo->nConstraint; i++, pConstraint++){
+        bool mandatory;
+        switch(pConstraint->iColumn) {
+            case RTABLE_SUBJECT:
+                mandatory = true;
+                argID = 0;
+                break;
+            case RTABLE_PATTERN:
+                mandatory = true;
+                argID = 1;
+                break;
+            case RTABLE_GROUP_ID:
+                mandatory = false;
+                argID = 2;
+                break;
+            default:
+                assert(false);
+        }
+        if(pConstraint->usable) {
+            constraintIDs[argID] = i;
+        } else {
+            if(mandatory) {
+                return SQLITE_CONSTRAINT;
+            }
+        }
+    }
+    for(argID = 0; argID < 2; argID ++) {
+        int cid = constraintIDs[argID];
+        if(cid == -1) {
+            sqlite3_free(tab->zErrMsg);
+            tab->zErrMsg = sqlite3_mprintf(
+                "Argument #%d of \"REGEXP_TABLE()\" missing", argID);
+            return SQLITE_ERROR;
+        } else {
+            pIdxInfo->aConstraintUsage[cid].argvIndex = argID + 1;
+        }
+    }
+    for(argID = 2; argID < 3; argID ++) {
+        int cid = constraintIDs[argID];
+        if(cid != -1) {
+            pIdxInfo->aConstraintUsage[cid].argvIndex = argID + 1;
+        }
+    }
+
     pIdxInfo->estimatedCost = (double)10;
     pIdxInfo->estimatedRows = 10;
     return SQLITE_OK;
