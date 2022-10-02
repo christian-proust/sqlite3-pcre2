@@ -27,10 +27,12 @@ VALUES
     ('''^A''',       '''''',         0,      'Blank subject'),
     (
         '''B''',
-        'x''00''||''B''',            1,      'NULL character in subject'),
+        'x''00''||''B''',            1,      'NUL character in subject'
+    ),
     (
         'x''00''||''B''',
-        '''a''||x''00''||''B''',     1,      'NULL character in pattern')
+        '''a''||x''00''||''B''',     1,      'NUL character in pattern'
+    )
 ;
 
 
@@ -42,10 +44,36 @@ INSERT INTO testregexp
 )
 VALUES
     ('''^(A''',     '''asdf''',
-        '%Cannot compile REGEXP pattern%missing closing parenthesis%',
+        '%Cannot compile REGEXP pattern ''^(A''%missing closing parenthesis%',
         'Non-compilable regexp'
-    )
-;
+    ),
+    ('''^(''||x''00''',     '''asdf''',
+        '%Cannot compile REGEXP pattern ''^(''||x''00''%missing closing parenthesis%',
+        'Error containing NUL character'
+    ),
+    ('''(1''''2''',     '''asdf''',
+        '%Cannot compile REGEXP pattern ''(1''''2''%missing closing parenthesis%',
+        'Error containing QUOTE character'
+    ),
+    (
+        '''(' || (
+                -- q is the table of all integer between 0 and 255
+                WITH RECURSIVE q AS (
+                    SELECT 0 AS n
+                    UNION ALL
+                    SELECT n+1 FROM q WHERE n < 255
+                )
+                SELECT GROUP_CONCAT(PRINTF('%x', n % 16), '') FROM q
+                -- return 256 characters:
+                -- '0123456789abcdef0123'...'4567890abcdef'
+            ) || '''',
+        '''asdf''',
+        '%Cannot compile REGEXP pattern '
+            || '''(0123456789abcdef0123%def012345678''...'
+            || '%missing closing parenthesis%',
+                                                             --  cdef012345678
+        'Error containing a very long parameter'
+    );
 
 
 -- Write the testcase corresponding to the test data
@@ -62,7 +90,7 @@ SELECT
         CASE WHEN `failmessage` IS NULL
         THEN
             '`report_value`'||' IS '||`match`
-        ELSE '`stderr` LIKE '''  || REPLACE(`failmessage`, '%', '%%') || ''''
+        ELSE '`stderr` LIKE '  || QUOTE(REPLACE(`failmessage`, '%', '%%'))
         END
     ) AS `evaluate_sql`,
     (

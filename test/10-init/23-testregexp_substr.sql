@@ -125,7 +125,7 @@ SELECT
         THEN
             '`report_value`'||' IS '||`retval`
             || ' AND ' || 'IFNULL(`exit_code`=0, FALSE)'
-        ELSE '`stderr` LIKE '''  || REPLACE(`failmessage`, '%', '%%') || ''''
+        ELSE '`stderr` LIKE '  || QUOTE(REPLACE(`failmessage`, '%', '%%'))
         END
     ) AS `evaluate_sql`,
     (

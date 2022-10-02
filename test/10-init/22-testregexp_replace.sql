@@ -142,6 +142,12 @@ VALUES
         '''abcde''',
         '''^(\w)(.)''',     '''$3 abcdef''',
         '%Cannot execute REGEXP_REPLACE%at character 2%unknown substring%'
+    ),
+    (
+        'Ensure that error strings of bad replacement escape properly binary characters',
+        '''a'' || x''00''',
+        '''^(a)('' || x''00'' || '')''', 'x''01''||''$3''',
+        '%Cannot execute REGEXP_REPLACE(''a''||x''00'', ''^(a)(''||x''00''||'')'', x''01''||''$3'')%'
     )
 ;
 
@@ -164,7 +170,7 @@ SELECT
         THEN
             '`report_value`'||' IS '||`substitute`
             || ' AND ' || 'IFNULL(`exit_code`=0, FALSE)'
-        ELSE '`stderr` LIKE '''  || REPLACE(`failmessage`, '%', '%%') || ''''
+        ELSE '`stderr` LIKE '  || QUOTE(REPLACE(`failmessage`, '%', '%%'))
         END
     ) AS `evaluate_sql`,
     (
