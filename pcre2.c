@@ -126,13 +126,17 @@ static char* escape_str_to_sql_literal(
             escape_prefix = "";
         }
         if(mode == 'x') {
-            fmt = "%s%s%s%02hhx";
+            // Note: Length modifier hh, available in glibc snprintf, is not
+            // available for sqlite3_snprintf.
+            // A mask needs to be applied to the char in order to ensure that
+            // only the first byte is taken in account.
+            fmt = "%s%s%s%02x";
         } else {
             fmt = "%s%s%s%c";
         }
         sqlite3_snprintf(
                 sizeof(buffer_str), buffer_str, fmt,
-                join_prefix, quote_prefix, escape_prefix, c
+                join_prefix, quote_prefix, escape_prefix, c & 0xff
         );
         buffer_len = strlen(buffer_str);
         assert(buffer_len < sizeof(buffer_str)-2);
