@@ -11,12 +11,12 @@ VALUES
         || ''/'' || (SELECT GROUP_CONCAT(`subject`       ) FROM REGEXP_TABLE(''abac'', ''a(.)?''))
         || ''/'' || (SELECT GROUP_CONCAT(`pattern`       ) FROM REGEXP_TABLE(''abac'', ''a(.)?''))
     )',
-    '`report_value` IS (''1,2,3,4,5,6,7,8,9''
-        || ''/1001,1002,1003,1004,1005,1006,1007,1008,1009''
-        || ''/2001,2002,2003,2004,2005,2006,2007,2008,2009''
-        || ''/3001,3002,3003,3004,3005,3006,3007,3008,3009''
-        || ''/abac,abac,abac,abac,abac,abac,abac,abac,abac''
-        || ''/a(.)?,a(.)?,a(.)?,a(.)?,a(.)?,a(.)?,a(.)?,a(.)?,a(.)?''
+    '`report_value` IS (''1,2,3,4''
+        || ''/0,1,0,1''
+        || ''/ab,b,ac,c''
+        || ''/1,1,2,2''
+        || ''/abac,abac,abac,abac''
+        || ''/a(.)?,a(.)?,a(.)?,a(.)?''
     ) AND IFNULL(`exit_code` = 0, FALSE)',
-    'Ensure that the REGEXP_TABLE issued from the template is working'
+    'Basic test case for REGEXP_TABLE'
 );

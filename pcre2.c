@@ -805,28 +805,48 @@ struct rtable_vtab {
 typedef struct rtable_cursor rtable_cursor;
 struct rtable_cursor {
     sqlite3_vtab_cursor base;  /* Base class - must be first */
-    sqlite3_int64 iRowid;      /* The rowid */
+
+    // Input data
     char* pattern_str;
     char* subject_str;
     int pattern_len;
     int subject_len;
-    pcre2_code* code;
-    int groupID;
+
+    // Filter on group
     sqlite3_value* filterGroup;
+    bool filterGroupIsInteger;
+
+    // Infos that can be obtained after compiling the pattern
+    pcre2_code* code;
+    uint8_t infoCaptureCount;
+    uint8_t infoNameCount;
+    uint8_t infoNameEntrySize;
+    char*   infoNameTable;
+
+    // Cursor mesuring the progress on the rows
+    sqlite3_int64 iRowid;
+    sqlite3_int64 groupID;
+    sqlite3_int64 matchOrder;
+    pcre2_match_data* match;
 };
 
 
 /** Reset the cursor of rtable_cursor, and free all memory held. */
 static int rtableCursorReset(rtable_cursor *pCur) {
     // Free all pointers
-    sqlite3_free(pCur->pattern_str); pCur->pattern_str = NULL;
-    sqlite3_free(pCur->subject_str); pCur->subject_str = NULL;
-    sqlite3_value_free(pCur->filterGroup); pCur->filterGroup = NULL;
+    sqlite3_free(pCur->pattern_str      ); pCur->pattern_str    = NULL;
+    sqlite3_free(pCur->subject_str      ); pCur->subject_str    = NULL;
+    sqlite3_free(pCur->infoNameTable    ); pCur->infoNameTable  = NULL;
+    sqlite3_value_free(pCur->filterGroup); pCur->filterGroup    = NULL;
     pcre2_code_free(pCur->code); pCur->code = NULL;
+    pcre2_match_data_free(pCur->match);
     // set integers to -1
-    pCur->groupID = -1;
-    pCur->pattern_len = -1;
-    pCur->subject_len = -1;
+    pCur->groupID           = -1;
+    pCur->pattern_len       = -1;
+    pCur->subject_len       = -1;
+    pCur->infoNameEntrySize = -1;
+    pCur->infoNameCount     = -1;
+    pCur->infoCaptureCount  = -1;
 }
 
 
@@ -923,8 +943,48 @@ static int rtableClose(sqlite3_vtab_cursor *cur){
 static int rtableNext(sqlite3_vtab_cursor *cur){
     rtable_cursor *pCur = (rtable_cursor*)cur;
     pCur->iRowid++;
+    bool matchNext = false;
+    if(pCur->filterGroup) {
+        matchNext = true;
+    } else {
+        pCur->groupID++;
+        if(pCur->groupID > pCur->infoCaptureCount + pCur->infoNameCount) {
+            pCur->groupID = 0;
+            matchNext = true;
+        }
+    }
+    if(matchNext) {
+        assert(pCur->code);
+        assert(pCur->match);
+        PCRE2_SIZE start;
+        {
+            uint32_t ovector_count = pcre2_get_ovector_count(pCur->match);
+            assert(ovector_count > 0);
+            PCRE2_SIZE* ovector = pcre2_get_ovector_pointer(pCur->match);
+            start = ovector[1];
+        }
+
+        int rc = pcre2_match(
+                pCur->code,           /* the compiled pattern */
+                pCur->subject_str,    /* the subject string */
+                pCur->subject_len,    /* the length of the subject */
+                start,                /* start at offset 0 in the subject */
+                0,                    /* default options */
+                pCur->match,          /* block for storing the result */
+                NULL);                /* use default match context */
+
+        assert(rc != 0);
+        if(rc == PCRE2_ERROR_NOMATCH) {
+            pcre2_match_data_free(pCur->match);
+            pCur->match = NULL;
+            pCur->matchOrder = -1;
+        } else {
+            pCur->matchOrder++;
+        }
+    }
     return SQLITE_OK;
 }
+
 
 /**
  * Return values of columns for the row at which the rtable_cursor
@@ -933,22 +993,65 @@ static int rtableNext(sqlite3_vtab_cursor *cur){
 static int rtableColumn(
         sqlite3_vtab_cursor *cur,   /* The cursor */
         sqlite3_context *ctx,       /* First argument to sqlite3_result_...() */
-        int i                       /* Which column to return */
-        ){
+        int column_id               /* Which column to return */
+){
     rtable_cursor *pCur = (rtable_cursor*)cur;
-    switch( i ){
+    switch(column_id){
         case RTABLE_GROUP_ID:
-        case RTABLE_VALUE:
-        case RTABLE_MATCH_ORDER:
-            // TODO to be implemented.
-            sqlite3_result_int64(ctx, 1000 + pCur->iRowid + 1000 * i);
+            assert(pCur->groupID >= 0);
+            assert(pCur->groupID <= pCur->infoCaptureCount + pCur->infoNameEntrySize);
+            if(pCur->filterGroup) {
+                sqlite3_result_value(ctx, pCur->filterGroup);
+            } else {
+                if(pCur->groupID <= pCur->infoCaptureCount) {
+                    sqlite3_result_int64(ctx, pCur->groupID);
+                } else {
+                    size_t offset = (pCur->groupID - pCur->infoCaptureCount)
+                                    * pCur->infoNameEntrySize;
+                    sqlite3_result_text(ctx, &pCur->infoNameTable[offset + 2], -1, NULL);
+                }
+            }
             break;
+
+        case RTABLE_VALUE:
+            assert(pCur->groupID >= 0);
+            assert(pCur->groupID <= pCur->infoCaptureCount + pCur->infoNameEntrySize);
+            uint32_t groupID;
+            if(pCur->groupID <= pCur->infoCaptureCount) {
+                groupID = pCur->groupID;
+            } else {
+                size_t offset = (pCur->groupID - pCur->infoCaptureCount)
+                                * pCur->infoNameEntrySize;
+                groupID = *((uint32_t*)&pCur->infoNameTable[offset]);
+            }
+            size_t result_len;
+            unsigned char *result_str;
+            int rc = pcre2_substring_get_bynumber(
+                    pCur->match,
+                    groupID,
+                    &result_str,
+                    &result_len);
+            if(rc == 0) {
+                sqlite3_result_text(
+                        ctx, result_str, result_len,
+                        (void (*)(void *))pcre2_substring_free);
+            } else {
+                error_pcre2sqlite(ctx, rc);
+            }
+            break;
+
+        case RTABLE_MATCH_ORDER:
+            sqlite3_result_int64(ctx, pCur->matchOrder);
+            break;
+
         case RTABLE_SUBJECT:
             sqlite3_result_text(ctx, pCur->subject_str, pCur->subject_len, NULL);
             break;
+
         case RTABLE_PATTERN:
             sqlite3_result_text(ctx, pCur->pattern_str, pCur->pattern_len, NULL);
             break;
+
         default:
             assert( false );
             break;
@@ -957,8 +1060,7 @@ static int rtableColumn(
 }
 
 /**
- * Return the rowid for the current row.  In this implementation, the
- * rowid is the same as the output value.
+ * Return the rowid for the current row.
  */
 static int rtableRowid(sqlite3_vtab_cursor *cur, sqlite_int64 *pRowid){
     rtable_cursor *pCur = (rtable_cursor*)cur;
@@ -972,7 +1074,7 @@ static int rtableRowid(sqlite3_vtab_cursor *cur, sqlite_int64 *pRowid){
  */
 static int rtableEof(sqlite3_vtab_cursor *cur){
     rtable_cursor *pCur = (rtable_cursor*)cur;
-    return pCur->iRowid>=10;
+    return !pCur->match;
 }
 
 /**
@@ -1007,15 +1109,16 @@ static int rtableFilter(
         sqlite3_vtab_cursor *pVtabCursor,
         int idxNum, const char *idxStr,
         int argc, sqlite3_value **argv
-        ){
+){
     rtable_cursor *pCur = (rtable_cursor *)pVtabCursor;
-    rtable_vtab *pTab = (rtable_vtab *)pCur->base.pVtab;
-    pCur->iRowid = 1;
+    rtable_vtab *pTab = (rtable_vtab*)pCur->base.pVtab;
+
+    rtableCursorReset(pCur);
 
     assert(argc >= 2);
     // TODO handle SQLITE_NULL arguments
 
-    // Subject copy into pCur->subject*
+    // Set attributes subject_len and subject_str
     int subject_len = sqlite3_value_bytes(argv[0]);
     const char*  subject_str = sqlite3_value_text(argv[0]);
     pCur->subject_str = sqlite3_malloc(subject_len);
@@ -1026,7 +1129,7 @@ static int rtableFilter(
     memcpy(pCur->subject_str, subject_str, subject_len);
     pCur->subject_len = subject_len;
 
-    // Pattern copy into pCur->pattern*
+    // Set attributes pattern_len and pattern_str
     int pattern_len = sqlite3_value_bytes(argv[1]);
     const char* pattern_str = sqlite3_value_text(argv[1]);
     pCur->pattern_str = sqlite3_malloc(pattern_len);
@@ -1037,7 +1140,7 @@ static int rtableFilter(
     memcpy(pCur->pattern_str, pattern_str, pattern_len);
     pCur->pattern_len = pattern_len;
 
-    // Code copy
+    // Set attribute code
     char *error;
     pcre2_code* code;
     int ans = pcre2_compile_from_sqlite_cache(
@@ -1053,19 +1156,107 @@ static int rtableFilter(
         return ans;
     }
     pCur->code = pcre2_code_copy(code);
-    pCur->groupID = 0;
+
+    // Set attribute filterGroup and filterGroupIsInteger
     if(argc > 2) {
         pCur->filterGroup = sqlite3_value_dup(argv[2]);
         if(pCur->filterGroup == NULL) {
             rtableCursorReset(pCur);
             return SQLITE_NOMEM;
         }
+        pCur->filterGroupIsInteger = sqlite3_value_numeric_type(pCur->filterGroup) == SQLITE_INTEGER;
     } else {
-        pCur->filterGroup = NULL;
+        assert(pCur->filterGroup == NULL);
     }
 
-    // TODO ensure that RTABLE_GROUP_ID is contained into the pattern.
-    // TODO apply regexp on pattern
+    // Load the info about the capture groups (named or unamed capture group).
+    // set infoCaptureCount
+    if(!pCur->filterGroup || pCur->filterGroupIsInteger) {
+        int rc = pcre2_pattern_info(pCur->code, PCRE2_INFO_CAPTURECOUNT, &pCur->infoCaptureCount);
+        assert(rc == 0);
+    } else {
+        pCur->infoCaptureCount = 0;
+    }
+    // set infoNameCount, infoNameEntrySize, infoNameTable
+    if(!pCur->filterGroup || !pCur->filterGroupIsInteger) {
+        int infoNameCount;
+        int infoNameEntrySize;
+        int rc;
+        rc = pcre2_pattern_info(pCur->code, PCRE2_INFO_NAMECOUNT, &infoNameCount);
+        assert(rc == 0);
+        rc = pcre2_pattern_info(pCur->code, PCRE2_INFO_NAMEENTRYSIZE, &infoNameEntrySize);
+        assert(rc == 0);
+        if(infoNameCount > 0 && infoNameEntrySize > 0) {
+            pCur->infoNameTable = sqlite3_malloc(infoNameCount * infoNameEntrySize);
+            if(!pCur->infoNameTable) {
+                rtableCursorReset(pCur);
+                return SQLITE_NOMEM;
+            }
+            rc = pcre2_pattern_info(pCur->code, PCRE2_INFO_NAMETABLE, &pCur->infoCaptureCount);
+            assert(rc == 0);
+        }
+        pCur->infoNameCount = infoNameCount;
+        pCur->infoNameEntrySize = infoNameEntrySize;
+    } else {
+        pCur->infoNameCount = 0;
+        pCur->infoNameEntrySize = 0;
+        assert(pCur->infoNameTable == NULL);
+    }
+
+    // Set groupID attribute
+    if(pCur->filterGroup) {
+        if(pCur->filterGroupIsInteger) {
+            sqlite3_int64 filterGroup;
+            filterGroup = sqlite3_value_int64(pCur->filterGroup);
+            if(filterGroup > pCur->infoCaptureCount) {
+                pCur->groupID = -1;
+            } else {
+                pCur->groupID = filterGroup;
+            }
+        } else {
+            const char* filterGroup = sqlite3_value_text(pCur->filterGroup);
+            int groupID = -1;
+            for(uint32_t i = 0; i < pCur->infoNameCount; i++) {
+                const char* groupName = &pCur->infoNameTable[pCur->infoNameEntrySize*i+2];
+                // XXX: May be optimized, as groupName are sorted
+                if(strcmp(groupName, filterGroup)) {
+                    groupID = i;
+                    break;
+                }
+            }
+            pCur->groupID = groupID;
+        }
+    } else {
+        pCur->groupID = 0;
+    }
+
+    // Set attributes match and matchOrder
+    if(pCur->groupID >= 0) {
+        assert(pCur->code);
+
+        pCur->match = pcre2_match_data_create_from_pattern(pCur->code, NULL);
+        int rc = pcre2_match(
+                pCur->code,           /* the compiled pattern */
+                pCur->subject_str,    /* the subject string */
+                pCur->subject_len,    /* the length of the subject */
+                0,                    /* start at offset 0 in the subject */
+                0,                    /* default options */
+                pCur->match,          /* block for storing the result */
+                NULL);                /* use default match context */
+
+        assert(rc != 0);
+        if(rc == PCRE2_ERROR_NOMATCH) {
+            pcre2_match_data_free(pCur->match);
+            pCur->match = NULL;
+            pCur->matchOrder = -1;
+        } else {
+            pCur->matchOrder = 1;
+        }
+    } else {
+        pCur->matchOrder = -1;
+        assert(pCur->match == NULL);
+    }
+    pCur->iRowid = 1;
     return SQLITE_OK;
 }
 
